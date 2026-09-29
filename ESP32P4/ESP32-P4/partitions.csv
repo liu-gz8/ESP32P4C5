@@ -1,0 +1,13 @@
+# 16MB Flash 分区表
+#
+# 名称,     类型,  子类型,   偏移,      大小,       标志
+nvs,        data,  nvs,      0xa000,    0x6000,
+phy_init,   data,  phy,      0x10000,   0x1000,
+factory,    app,   factory,  0x20000,   0x800000,
+storage,    data,  spiffs,   0x820000,  0x780000,
+#
+# 说明:
+#  - factory 8MB:当前 app 约 0.2MB,给 esp-dl + 模型权重留足空间
+#  - storage 约 8MB:校准数据、录制的评估集、人脸特征库
+#  - 尚未划 OTA 双分区。文档 04 §7.3 要求 OTA 可回滚,那会改成
+#    ota_0/ota_1 各 4MB + storage 8MB,在启用 OTA 之前再定。

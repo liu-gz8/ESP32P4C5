@@ -1,0 +1,53 @@
+# 板级默认配置 —— 实物:OSPTEK(鱼鹰光电)ESP32-P4C5 模组基础底板
+# 依据:模组出厂 demo 固件的启动日志(见 doc/rules/10_实际硬件与开发环境记录.md §2)
+#
+# 注意:修改本文件后需要删除 sdkconfig 让 IDF 重新生成,例如:
+#   Remove-Item sdkconfig
+#   idf build
+
+# ---------------------------------------------------------------- 目标芯片
+CONFIG_IDF_TARGET="esp32p4"
+
+# ------------------------------------------------------------------ Flash
+# 实物为 16MB;出厂 demo 日志「SPI Flash Size : 16MB」
+CONFIG_ESPTOOLPY_FLASHSIZE_16MB=y
+# 实物 Flash 是 Boya 芯片,不开这个会走通用驱动并打印告警
+CONFIG_SPI_FLASH_SUPPORT_BOYA_CHIP=y
+
+# ------------------------------------------------------------------ PSRAM
+# 实物为封装内 32MB PSRAM,出厂 demo 以 200MHz 运行
+# 帧缓冲、模型权重、显示双缓冲全部依赖它,不开则 09 文档的内存预算不成立
+CONFIG_SPIRAM=y
+CONFIG_SPIRAM_MODE_HEX=y
+CONFIG_SPIRAM_SPEED_200M=y
+# 250MHz 需要芯片 rev >= 3.0(本板为 v3.2,理论可用),留作后续性能实验
+
+# ---------------------------------------------------------------- 分区表
+# 偏移必须 >= 0x9000:bootloader 在 IDF 6.1 + 已启用组件下会涨到约 0x6140,
+# 放不进 0x8000 起的 0x2000 空间。厂商与出厂固件同样用 0x9000。
+CONFIG_PARTITION_TABLE_OFFSET=0x9000
+CONFIG_PARTITION_TABLE_CUSTOM=y
+CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
+
+# ---------------------------------------------------- 摄像头(SC2336 / MIPI-CSI)
+# 走 esp_video 的 V4L2 设备接口(/dev/video0),ISP 输出 RGB565。
+CONFIG_ESP_VIDEO_ENABLE_ISP=y
+CONFIG_ESP_VIDEO_ENABLE_MIPI_CSI_VIDEO_DEVICE=y
+CONFIG_ESP_VIDEO_ENABLE_ISP_VIDEO_DEVICE=y
+CONFIG_ESP_VIDEO_ENABLE_ISP_PIPELINE_CONTROLLER=y
+CONFIG_ESP_VIDEO_DISABLE_ISP_ERROR_INTERRUPT=y
+CONFIG_CAMERA_SC2336=y
+CONFIG_CAMERA_SC2336_AUTO_DETECT_MIPI_INTERFACE_SENSOR=y
+# 传感器原生模式:MIPI RAW8 1280x720@30fps(厂商出厂固件同款)
+# CONFIG_CAMERA_SC2336_MIPI_RAW8_1280X720_30FPS=y
+CONFIG_CAMERA_SC2336_MIPI_RAW8_800X800_30FPS=y
+CONFIG_CAMERA_SC2336_MIPI_DEFAULT_FMT_RAW8_800X800_30FPS=y
+CONFIG_CAMERA_XCLK_USE_ESP_CLOCK_ROUTER=y
+
+# ------------------------------------------------------------ 系统与调度
+# ESP-Hosted(P4↔C5)官方建议 1000Hz,100Hz 会有总线级抖动
+CONFIG_FREERTOS_HZ=1000
+CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ_400=y
+
+# -------------------------------------------------------------------- 日志
+CONFIG_LOG_DEFAULT_LEVEL_INFO=y
