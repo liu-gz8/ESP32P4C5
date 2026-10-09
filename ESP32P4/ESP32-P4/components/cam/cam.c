@@ -37,7 +37,7 @@ static const char *TAG = "cam";
 
 /* 环形缓冲个数。2 个即可让"取帧—处理"与"采集"重叠,
  * 具体数量在文档 09 §2.3 的队列设计里可再调。 */
-#define CAM_BUFFER_COUNT     2
+#define CAM_BUFFER_COUNT     4
 
 typedef struct {
     int fd;
@@ -45,7 +45,6 @@ typedef struct {
     cam_stats_t stats;
     uint8_t *buffers[CAM_BUFFER_COUNT];
     size_t   lengths[CAM_BUFFER_COUNT];
-    int      acquired_index;   /*!< 当前借出给调用方的缓冲,-1 表示没有 */
 } cam_ctx_t;
 
 static cam_ctx_t s_cam;
@@ -164,7 +163,6 @@ esp_err_t cam_init(void)
     cam_ctx_t *cam = &s_cam;
     memset(cam, 0, sizeof(*cam));
     cam->fd = -1;
-    cam->acquired_index = -1;
 
     ESP_RETURN_ON_ERROR(cam_init_video_hw(), TAG, "摄像头硬件初始化失败");
     ESP_RETURN_ON_ERROR(cam_open_and_configure(), TAG, "摄像头打开/配置失败");
@@ -185,11 +183,11 @@ void cam_get_stats(cam_stats_t *out)
     }
 }
 
-esp_err_t cam_acquire_frame(void **data, size_t *len, uint32_t timeout_ms)
+esp_err_t cam_acquire_frame(cam_frame_t *out, uint32_t timeout_ms)
 {
     cam_ctx_t *cam = &s_cam;
     (void)timeout_ms;   /* 超时语义尚未实现,见 cam.h 的说明 */
-    ESP_RETURN_ON_FALSE(data && len, ESP_ERR_INVALID_ARG, TAG, "参数为空");
+    ESP_RETURN_ON_FALSE(out != NULL, ESP_ERR_INVALID_ARG, TAG, "参数为空");
     ESP_RETURN_ON_FALSE(cam->fd >= 0, ESP_ERR_INVALID_STATE, TAG, "摄像头未初始化");
 
     struct v4l2_buffer buf = {
@@ -216,21 +214,27 @@ esp_err_t cam_acquire_frame(void **data, size_t *len, uint32_t timeout_ms)
         ESP_LOGW(TAG, "cache 同步失败: %s", esp_err_to_name(err));
     }
 
-    cam->acquired_index = buf.index;
-    *data = cam->buffers[buf.index];
-    *len = buf.bytesused;
+    /* 把"这一帧是谁"完整交给调用方 —— 归还时凭 index 认领,不再依赖内部状态。
+     * 这样就能同时持有两帧:一边拿着新帧,一边把旧帧还回去。 */
+    out->data  = cam->buffers[buf.index];
+    out->len   = buf.bytesused;
+    out->index = buf.index;
 
     cam->stats.frames++;
     cam->stats.last_frame_bytes = buf.bytesused;
     return ESP_OK;
 }
 
-esp_err_t cam_release_frame(void)
+esp_err_t cam_release_frame(const cam_frame_t *frame)
 {
     cam_ctx_t *cam = &s_cam;
-    ESP_RETURN_ON_FALSE(cam->acquired_index >= 0, ESP_ERR_INVALID_STATE, TAG, "没有待归还的帧");
 
-    const int index = cam->acquired_index;
+    ESP_RETURN_ON_FALSE(frame != NULL, ESP_ERR_INVALID_ARG, TAG, "参数为空");
+    /* 缓冲号来自内部,但仍然检查一次 —— 防御性检查很便宜,越界写的代价极高 */
+    ESP_RETURN_ON_FALSE(frame->index >= 0 && frame->index < CAM_BUFFER_COUNT,
+                        ESP_ERR_INVALID_ARG, TAG, "缓冲号越界: %d", frame->index);
+
+    const int index = frame->index;
     struct v4l2_buffer buf = {
         .type = V4L2_BUF_TYPE_VIDEO_CAPTURE,
         .memory = V4L2_MEMORY_USERPTR,
@@ -244,6 +248,5 @@ esp_err_t cam_release_frame(void)
         return ESP_FAIL;
     }
 
-    cam->acquired_index = -1;
     return ESP_OK;
 }

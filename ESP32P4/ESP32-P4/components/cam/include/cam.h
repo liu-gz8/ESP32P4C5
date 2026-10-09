@@ -39,6 +39,19 @@ typedef struct {
 } cam_stats_t;
 
 /**
+ * 一帧的所有权凭据
+ *
+ * 取帧时拿到,归还时交回。之所以要带 index,是为了支持"同时持有两帧":
+ * 流水线里采集任务可能一边拿着刚取到的新帧,一边把槽位里的旧帧还回去 ——
+ * 只靠内部单一状态是区分不了这两帧的。
+ */
+typedef struct {
+    void  *data;   /*!< 帧数据(PSRAM),CPU 可直接读 */
+    size_t len;    /*!< 帧实际字节数 */
+    int    index;  /*!< 驱动缓冲号,归还时必须原样交回 */
+} cam_frame_t;
+
+/**
  * @brief 初始化摄像头硬件并开始出流
  *
  * 成功返回后即可调用 cam_acquire_frame() 取帧。
@@ -54,22 +67,28 @@ void cam_get_stats(cam_stats_t *out);
 /**
  * @brief 取一帧(阻塞直到有帧或超时)
  *
- * @param[out] data        帧数据指针,PSRAM 中,CPU 可直接读
- * @param[out] len         帧实际字节数
- * @param[in]  timeout_ms  超时毫秒数
- * @return ESP_OK / ESP_ERR_TIMEOUT / 其他
+ * @param[out] out         取到的帧(含数据指针、长度、缓冲号)
+ * @param[in]  timeout_ms  超时毫秒数(当前未实现,见下方 note)
  *
- * @note 取到帧后必须调用 cam_release_frame() 把缓冲还给驱动,
- *       否则缓冲耗尽后流水线会停住。
+ * @note 取到帧后必须用 cam_release_frame() 把缓冲还给驱动,否则缓冲耗尽、
+ *       出流会停住。
+ *
+ * @note 归还时**必须用同一个 cam_frame_t**。允许同时持有多个帧(上限为
+ *       CAM_BUFFER_COUNT),归还顺序不限 —— 这正是流水线"丢最旧保最新"
+ *       所需要的能力。
  *
  * @note 当前 VIDIOC_DQBUF 是阻塞调用,尚未按 timeout_ms 做超时。
  *       等 policy 层需要"丢帧保实时"时再改成 poll/select 实现;
  *       在那之前不要依赖这里的超时语义。
  */
-esp_err_t cam_acquire_frame(void **data, size_t *len, uint32_t timeout_ms);
+esp_err_t cam_acquire_frame(cam_frame_t *out, uint32_t timeout_ms);
 
-/** @brief 归还上一帧缓冲 */
-esp_err_t cam_release_frame(void);
+/**
+ * @brief 归还一帧缓冲
+ *
+ * @param[in] frame  由 cam_acquire_frame() 返回的那个帧(原样传回)
+ */
+esp_err_t cam_release_frame(const cam_frame_t *frame);
 
 #ifdef __cplusplus
 }

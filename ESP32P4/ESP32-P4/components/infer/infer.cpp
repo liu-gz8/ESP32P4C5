@@ -23,6 +23,8 @@
 
 static const char *TAG = "infer";
 
+static float s_score_thr = 0.7f;   /*置信度阈值*/
+
 static PedestrianDetect *s_detect = nullptr;
 static infer_stats_t s_stats;
 
@@ -38,7 +40,9 @@ extern "C" esp_err_t infer_init(void)
         return ESP_ERR_NO_MEM;
     }
 
-    ESP_LOGI(TAG, "行人检测模型已加载(输入 224x224x3)");
+    s_detect->set_score_thr(s_score_thr, 0);
+
+    ESP_LOGI(TAG, "行人检测模型已加载(输入 224x224x3) 阈值:%.2f", s_score_thr);
     return ESP_OK;
 }
 
@@ -52,61 +56,23 @@ extern "C" esp_err_t infer_run(const uint8_t *rgb565, uint32_t width, uint32_t h
         return ESP_ERR_INVALID_ARG;
     }
 
-
-    /* ==================== TODO 1:把这一帧包装成 esp-dl 的图像结构 ====================
-     * 需要用到的字段(去看 dl_image_define.hpp 里 img_s 的定义):
-     *     img.data     = 帧数据指针
-     *     img.width    = ?          ← 用函数参数,不要写死数字
-     *     img.height   = ?
-     *     img.pix_type = ?          ← 两个候选:DL_IMAGE_PIX_TYPE_RGB565LE / ...BE
-     *
-     * 判断方法(先推、再实测):
-     *   - 我们相机的 fourcc 是 0x50424752,拆开是 'R','G','B','P'
-     *   - V4L2 的 fourcc 是按 a | b<<8 | c<<16 | d<<24 拼的
-     *   - 想清楚这个字节序对应 esp-dl 的 LE 还是 BE,填进去
-     *   - 如果填错,现象是"检测结果完全没有意义"(框乱飘/置信度极低),
-     *     所以先写一版,后面用真实画面验证
-     */
+    /*初始化esp-dl的结构体*/
     dl::image::img_t img = {
                             .data = (void*)rgb565,
                             .width = (uint16_t)width,
                             .height = (uint16_t)height,
                             .pix_type = dl::image::pix_type_t::DL_IMAGE_PIX_TYPE_BGR565LE,
                             };
+                            
 
-
-    /* ==================== TODO 2:调用推理并计时 ====================
-     *   int64_t t_begin = esp_timer_get_time();
-     *   std::list<dl::detect::result_t> &results = s_detect->run(img);
-     *   uint32_t cost_us = (uint32_t)(esp_timer_get_time() - t_begin);
-     *
-     * 注意:run() 内部一次做完了 前处理 + 模型 + 后处理,接口上无法分开计时,
-     *       所以我们只能记录总耗时——这个限制要如实反映在日志里,不要假装分段测了。
-     */
-
+    /*推理计时*/
      int64_t t_begin = esp_timer_get_time();
      std::list<dl::detect::result_t> &results = s_detect->run(img);
      uint32_t cost_us = (uint32_t)(esp_timer_get_time() - t_begin);
      //ESP_LOGI(TAG, "run() 单次耗时: %u", cost_us);
 
 
-    /* ==================== TODO 3:把结果用拷进调方的数组 ====================
-     * 规则(照着做,否则容易写出越界或坐标错的 bug):
-     *
-     *   1. 最多写 max_boxes 个;超出部分丢弃(后面要统计丢弃数)
-     *
-     *   2. result_t.box 的格式是 [left, top, right, bottom],且 right/bottom 是"包含"的
-     *        → x = box[0]
-     *          y = box[1]
-     *          w = box[2] - box[0] + 1      ← 想清楚这个 +1 为什么存在
-     *          h = box[3] - box[1] + 1
-     *
-     *   3. score 是 0.0~1.0 的浮点,转成 0~100 的整数存进 score_pct(方便打印)
-     *      category 直接拷
-     *
-     *   4. 更新统计:s_stats.frames++、last_us、min_us、max_us
-     *      (注意 min_us 的初值:如果你写 0,那最小值就永远是 0 了——想个办法)
-     */
+    /*拷贝结果到调用方给的地址*/
     size_t n = 0;
 
     for(auto &det : results)
@@ -138,4 +104,13 @@ extern "C" esp_err_t infer_run(const uint8_t *rgb565, uint32_t width, uint32_t h
 extern "C" const infer_stats_t *infer_get_stats(void)
 {
     return &s_stats;
+}
+
+extern "C" esp_err_t infer_set_score_thr(float thr)
+{
+    if(thr <= 0.0f || thr >= 1.0f)
+        return ESP_ERR_INVALID_ARG;
+    if(s_detect)
+    s_detect->set_score_thr(thr, 0);
+    return ESP_OK;
 }

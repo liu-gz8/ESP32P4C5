@@ -1,24 +1,62 @@
-# ESP-IDF environment bootstrap for this workspace.
+﻿# ESP-IDF environment bootstrap for this workspace.
 #
 # Why this file exists:
-#   The ESP-IDF Windows installer's Python virtualenv at
-#   C:\Espressif\tools\python\v6.1\venv points at a Python 3.11 installation
-#   (C:\Users\Administrator\AppData\Local\Programs\Python\Python311) that no
-#   longer exists on this machine, so `idf.py` cannot start.
+#   To start idf.py with an interpreter that has the ESP-IDF requirements, and
+#   to always pick the same one. idf.py records the interpreter path inside
+#   build/CMakeCache.txt and stops with a message asking for "fullclean" if a
+#   different interpreter shows up afterwards.
 #
-#   .tools\idf_py_venv is a replacement venv created from the PlatformIO
-#   Python 3.11.7 interpreter, pre-populated with the ESP-IDF Python
-#   requirements that were still present in the old venv's site-packages.
+#   Two venvs exist on this machine:
+#     - C:\Espressif\tools\python\v6.1\venv   created by the ESP-IDF installer
+#     - D:\ESP32P4C5\.tools\idf_py_venv       workspace-local fallback, built
+#       from the PlatformIO Python 3.11 interpreter
 #
 # Usage:
 #   . D:\ESP32P4C5\tools\idf.ps1
 #   idf build
 #   idf -C D:\ESP32P4C5\ESP32P4\ESP32-P4 build
 
+$ProjectDir   = 'D:\ESP32P4C5\ESP32P4\ESP32-P4'
 $IdfRoot      = 'D:\ESP-IDF\.espressif\v6.1\esp-idf'
 $ToolsRoot    = 'C:\Espressif'
-$PythonEnv    = 'D:\ESP32P4C5\.tools\idf_py_venv'
 $IdfVersion   = '6.1'
+
+# Keep this file ASCII-only, or save it as UTF-8 *with* a BOM.
+# Windows PowerShell 5.1 reads a script without a BOM as ANSI, so non-ASCII
+# text is mis-decoded and a multi-byte character can swallow the newline after
+# it. That silently comments out the following line of code. It is exactly how
+# the "$IdfArgs = $args" line in the idf function below once disappeared, which
+# made every "idf ..." call arrive at idf.py with no arguments at all.
+
+# Which Python runs idf.py. The interpreter recorded in build/CMakeCache.txt is
+# tried first: reusing it avoids the virtualenv mismatch that makes idf.py
+# print its help text and exit with code 2 (which looks like a bad-argument
+# error but is not).
+$PythonEnvCandidates = New-Object System.Collections.Generic.List[string]
+$cmakeCache = Join-Path $ProjectDir 'build\CMakeCache.txt'
+if (Test-Path $cmakeCache) {
+    $configured = Select-String -Path $cmakeCache -Pattern '^PYTHON:[^=]*=(.+)$' | Select-Object -First 1
+    if ($configured) {
+        # C:\...\venv\Scripts\python.exe  ->  C:\...\venv
+        $exe = $configured.Matches[0].Groups[1].Value.Trim()
+        $PythonEnvCandidates.Add((Split-Path (Split-Path $exe -Parent) -Parent))
+    }
+}
+$PythonEnvCandidates.Add('C:\Espressif\tools\python\v6.1\venv')
+$PythonEnvCandidates.Add('D:\ESP32P4C5\.tools\idf_py_venv')
+
+$PythonEnv = $null
+foreach ($candidate in $PythonEnvCandidates) {
+    $exe = Join-Path $candidate 'Scripts\python.exe'
+    if (-not (Test-Path $exe)) { continue }
+    & $exe -c 'import click, kconfiglib, esptool' *> $null
+    if ($LASTEXITCODE -eq 0) { $PythonEnv = $candidate; break }
+}
+if (-not $PythonEnv) {
+    Write-Host 'No usable ESP-IDF Python virtualenv found. Checked:' -ForegroundColor Red
+    $PythonEnvCandidates | ForEach-Object { Write-Host "  $_" -ForegroundColor Red }
+    return
+}
 
 $env:IDF_PATH                   = $IdfRoot
 $env:IDF_TOOLS_PATH             = $ToolsRoot

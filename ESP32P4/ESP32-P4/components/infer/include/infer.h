@@ -29,13 +29,24 @@ typedef struct {
     uint8_t  category;    /*!< 类别编号 */
 } infer_box_t;
 
-/** 运行统计(文档 09 §2.3 要求的可观测性) */
+/** 运行统计 */
 typedef struct {
     uint32_t frames;     /*!< 已完成的推理帧数 */
     uint32_t last_us;    /*!< 最近一次推理耗时(微秒,含前处理+后处理) */
     uint32_t min_us;     /*!< 最小耗时 */
     uint32_t max_us;     /*!< 最大耗时 */
 } infer_stats_t;
+
+/** 模型槽位配置 */
+typedef struct
+{
+    const char* name;   /*槽位名*/
+    uint32_t input_w;   /*模型输入宽*/
+    uint32_t input_h;   /*模型输入高*/
+    float    score_thr; /*置信度阈值*/
+    float    nms_thr;   /*NMS IoU阈值*/
+}infer_slot_cfg_t;
+
 
 /**
  * @brief 加载模型并初始化推理组件
@@ -60,6 +71,12 @@ esp_err_t infer_run(const uint8_t *rgb565, uint32_t width, uint32_t height,
 /** @brief 读取运行统计 */
 const infer_stats_t *infer_get_stats(void);
 
+/**
+ * @brief 设置置信度阈值
+ * 
+ * @note 必须在infer_init()里面，模型首次run()之前调用
+ */
+esp_err_t infer_set_score_thr(float thr);
 #ifdef __cplusplus
 }
 #endif
